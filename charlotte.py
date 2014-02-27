@@ -1,9 +1,11 @@
+#!/usr/bin/python
 import os
 import sys
 import random
 import time
 import pickle
 
+#Windows
 if sys.platform.startswith("win"):
 	import ctypes
 	import pythoncom
@@ -25,6 +27,7 @@ if sys.platform.startswith("win"):
 else:
 	raise NotImplementedError("Environment is not supported")
 
+#load command line arguments, handling defaults
 if len(sys.argv)>2:
 	delay=float(sys.argv[1])
 	root=sys.argv[2]
@@ -48,7 +51,9 @@ def traverse(p):
 		wallpapers.extend([os.path.join(path,f) for f in files if os.path.splitext(f)[1] in imgexts])
 	return wallpapers
 
+#load the pickled status from the status file
 def read_status():
+	#loop to retry 
 	while True:
 		try:
 			if os.path.isfile("status"):
@@ -67,6 +72,7 @@ def read_status():
 	
 	return indices,i
 
+#save the status as a pickle
 def write_status(indices,i):
 	try:
 		pickle.dump((indices,i),open("status","wb"))
@@ -87,7 +93,7 @@ def update(i,ind,wall,check):
 			del indices[v]
 	elif num<0:
 		for x in range(check,check-num):
-			v=random.randrange(0,wall)
+			v=random.randrange(i,wall)
 			
 			if v<=i:
 				i-=1
