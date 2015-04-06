@@ -1,0 +1,8 @@
+Nonpony/
+Pony/
+.git/
+*.exe
+*.o
+status
+error.log
+Thumbs.db

@@ -1,6 +1,15 @@
-#include <windows.h>
-#include <wininet.h>
-#include <shlobj.h>
+#define WINDOWS 1
+#if defined(_WIN32) || defined(_WIN64)
+	#define OS WINDOWS
+#else
+	#error Unknown OS environment
+#endif
+
+#if OS==WINDOWS
+	#include <windows.h>
+	#include <wininet.h>
+	#include <shlobj.h>
+#endif
 
 #include <cstdio>
 #include <ctime>
@@ -18,27 +27,149 @@
 #include <thread>
 #include <chrono>
 
+//Used to decouple the underlying index type from logic
 typedef unsigned nwp_t;
 
-void error(const char* msg){
-	FILE* f=fopen("error.log","a");
-	if(f){
-		time_t t=time(0);
-		fputs(asctime(localtime(&t)),f);
-		fputs(" : ",f);
-		fputs(msg,f);
-		fputs("\n\n",f);
-		fclose(f);
-	}
-}
+//OS-specific functions (these aren't declared for flexibility)
+// void traverse(std::string,std::vector<std::string>&);
+// void set_wallpaper(const char* path);
+// void init();
+// void deinit();
 
+//Forward declarations for the OS-specific functions
+void error(const char*);
+nwp_t random(nwp_t);
+bool exists(const char*);
+bool is_image(const char*);
+void write_status(nwp_t,const std::vector<nwp_t>&);
+nwp_t read_status(std::vector<nwp_t>&,nwp_t);
+nwp_t update(const char*,nwp_t,std::vector<nwp_t>&,std::vector<std::string>&);
+
+#if OS==WINDOWS
+	void traverse(std::string path,std::vector<std::string>& wallpapers){
+		WIN32_FIND_DATA fdata;
+		HANDLE search=FindFirstFile((path+"\\*").c_str(),&fdata);
+		if(search==INVALID_HANDLE_VALUE){
+			throw std::runtime_error("Couldn't start directory search");
+		}
+		
+		//This makes it easy to keep track of the searching state
+		struct SObj{
+			//The search handle so directory searching can be resumed 
+			// mid-search.
+			HANDLE search;
+			//The path of the directory tree up to this point.
+			std::string path;
+		};
+		std::stack<SObj> dirs;
+		
+		//Complicated breaking logic, use an "infinite" loop
+		for(;;){
+			//Filenames that start with . are considered "hidden" in Unix
+			// environments, and this also ignores the . and .. directories.
+			if(!(fdata.cFileName[0]=='.' ||
+					fdata.dwFileAttributes&FILE_ATTRIBUTE_HIDDEN
+			)){
+				if(fdata.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY){
+					dirs.push({search,path});
+					path+="\\";
+					path+=fdata.cFileName;
+					search=FindFirstFile((path+"\\*").c_str(),&fdata);
+					//Don't even care, the directory's probably protected or
+					// something
+					if(search==INVALID_HANDLE_VALUE){
+						SObj sob=dirs.top();
+						search=sob.search;
+						path=sob.path;
+						dirs.pop();
+					}
+					continue;
+				}
+				
+				if(is_image(fdata.cFileName)){
+					wallpapers.push_back(path+"\\"+fdata.cFileName);
+				}
+			}
+			
+			//This is a loop so the next file isn't a repeat of an older one,
+			// which messes up the rest of the logic.
+			while(!FindNextFile(search,&fdata)){
+				if(GetLastError()==ERROR_NO_MORE_FILES){
+					if(dirs.size()==0){
+						FindClose(search);
+						return;
+					}
+					else{
+						FindClose(search);
+						SObj sob=dirs.top();
+						search=sob.search;
+						path=sob.path;
+						dirs.pop();
+					}
+				}
+				else{
+					//The handles haven't been RAII'd, so we have to free
+					// them first
+					while(dirs.size()){
+						FindClose(dirs.top().search);
+						dirs.pop();
+					}
+					
+					throw std::runtime_error("Couldn't find the next file");
+				}
+			}
+		}
+	}
+
+	void set_wallpaper(const char* path){
+		char buf[MAX_PATH];
+		//Have to get the full pathname for Windows to know what we're
+		// talking about
+		GetFullPathName(path,MAX_PATH,buf,NULL);
+		
+		//Convert the path to a wchar_t string
+		wchar_t wbuf[MAX_PATH];
+		mbstowcs(wbuf,buf,MAX_PATH);
+		
+		//Some kind of fancy ActiveDesktop magic; The Python version does 
+		// almost exactly the same thing.
+		//You can change the desktop with SystemParametersInfo, but this
+		// is the only way to get it to fade in between images.
+		CoInitializeEx(0,COINIT_APARTMENTTHREADED);
+		IActiveDesktop* desktop;
+		CoCreateInstance(
+			CLSID_ActiveDesktop,NULL,CLSCTX_INPROC_SERVER,
+			IID_IActiveDesktop,(void**)&desktop
+		);
+		
+		//Note WPSTYLE_STRETCH here - it may be desirable to add more
+		// options to the program to switch this out.
+		WALLPAPEROPT wOption={sizeof(WALLPAPEROPT),WPSTYLE_STRETCH};
+		desktop->SetWallpaper(wbuf,0);
+		desktop->SetWallpaperOptions(&wOption,0);
+		desktop->ApplyChanges(AD_APPLY_ALL);
+		
+		desktop->Release();
+		CoUninitialize();
+	}
+	
+	void init(){
+		//I can't tell if this is actually necessary? It might be that it
+		// must be sent once per boot, or it might be entirely pointless.
+		//SendMessageTimeout(FindWindow("Progman",NULL),0x52c,0,0,0,500,NULL);
+	}
+	
+	void deinit(){}
+#endif
+
+//Function returning an integer [0, hi)
 nwp_t random(nwp_t hi){
-	static std::mt19937 mt{(unsigned)std::chrono::system_clock::to_time_t(
-		std::chrono::high_resolution_clock::now()
-	)};
+	static std::mt19937 mt{(unsigned)time(0)};
 	return std::uniform_int_distribution<nwp_t>(0,hi)(mt);
 }
 
+//There might be faster ways to implement this using OS-specific code
+//Alternatively, this could be merged with set_wallpaper
 bool exists(const char* fn){
 	FILE* f=fopen(fn,"rb");
 	if(f){
@@ -51,98 +182,11 @@ bool exists(const char* fn){
 bool is_image(const char* fn){
 	const char* dot=strrchr(fn,'.');
 	return dot && !(
+		//This list isn't exhaustive, but close enough for wallpaper extensions
+		//These are roughly in order of expected usage frequency
 		strcmp(dot,".png") && strcmp(dot,".jpg") && strcmp(dot,".jpeg") &&
 		strcmp(dot,".bmp") && strcmp(dot,".jng")
 	);
-}
-
-void traverse(std::string path,std::vector<std::string>& wallpapers){
-	const char mask[]="\\*";
-	
-	WIN32_FIND_DATA fdata;
-	HANDLE search=FindFirstFile((path+mask).c_str(),&fdata);
-	if(search==INVALID_HANDLE_VALUE){
-		throw std::runtime_error("Couldn't start directory search");
-	}
-	
-	struct SObj{
-		HANDLE search;
-		std::string name;
-	};
-	std::stack<SObj> dirs;
-	
-	for(;;){
-		if(!(fdata.cFileName[0]=='.' ||
-				fdata.dwFileAttributes&FILE_ATTRIBUTE_HIDDEN
-		)){
-			if(fdata.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY){
-				dirs.push({search,path});
-				path+="\\";
-				path+=fdata.cFileName;
-				search=FindFirstFile((path+mask).c_str(),&fdata);
-				if(search==INVALID_HANDLE_VALUE){
-					SObj sob=dirs.top();
-					search=sob.search;
-					path=sob.name;
-					dirs.pop();
-				}
-				continue;
-			}
-			
-			if(is_image(fdata.cFileName)){
-				wallpapers.push_back(path+"\\"+fdata.cFileName);
-			}
-		}
-		
-		while(!FindNextFile(search,&fdata)){
-			if(GetLastError()==ERROR_NO_MORE_FILES){
-				if(dirs.size()==0){
-					FindClose(search);
-					return;
-				}
-				else{
-					FindClose(search);
-					SObj sob=dirs.top();
-					search=sob.search;
-					path=sob.name;
-					dirs.pop();
-				}
-			}
-			else{
-				while(dirs.size()){
-					FindClose(dirs.top().search);
-					dirs.pop();
-				}
-				
-				throw std::runtime_error("Couldn't find the next file");
-			}
-		}
-	}
-}
-
-void set_wallpaper(const char* path){
-	char buf[MAX_PATH];
-	GetFullPathName(path,MAX_PATH,buf,NULL);
-	wchar_t wbuf[MAX_PATH];
-	mbstowcs(wbuf,buf,MAX_PATH);
-	
-	CoInitializeEx(0,COINIT_APARTMENTTHREADED);
-    IActiveDesktop* desktop;
-    CoCreateInstance(
-		CLSID_ActiveDesktop,NULL,CLSCTX_INPROC_SERVER,
-		IID_IActiveDesktop,(void**)&desktop
-	);
-    WALLPAPEROPT wOption={sizeof(WALLPAPEROPT),WPSTYLE_STRETCH};
-    desktop->SetWallpaper(wbuf,0);
-    desktop->SetWallpaperOptions(&wOption,0);
-    desktop->ApplyChanges(AD_APPLY_ALL);
-    desktop->Release();
-    CoUninitialize();
-	/*
-	SystemParametersInfo(
-		SPI_SETDESKWALLPAPER,0,(PVOID)buf,SPIF_UPDATEINIFILE
-	);
-	*/
 }
 
 //Write the current status to the status file
@@ -159,9 +203,23 @@ void write_status(nwp_t i,const std::vector<nwp_t>& indices){
 	fclose(f);
 }
 
+//Write just the position to the beginning of the file
+void write_pos(nwp_t i){
+	FILE* f=fopen("status","w+b");
+	if(!f){
+		throw new std::runtime_error("Cannot open status file");
+	}
+	fseek(f,0,SEEK_SET);
+	
+	fwrite(&i,sizeof(nwp_t),1,f);
+	fclose(f);
+}
+
 //Load a file meant to save the status of the shuffling
 nwp_t read_status(std::vector<nwp_t>& indices,nwp_t wallpapers){
 	FILE* f=fopen("status","rb");
+	
+	//Sanity check
 	indices.clear();
 	
 	if(f){
@@ -177,10 +235,13 @@ nwp_t read_status(std::vector<nwp_t>& indices,nwp_t wallpapers){
 		return i;
 	}
 	
+	//Build any list which enumerates all possible indices
 	while(wallpapers--){
 		indices.push_back(wallpapers);
 	}
 	
+	//Shuffle the list - this'll be iterated over incrementally to
+	// guarantee no repetitions
 	std::random_shuffle(indices.begin(),indices.end(),random);
 	
 	fclose(f);
@@ -190,67 +251,78 @@ nwp_t read_status(std::vector<nwp_t>& indices,nwp_t wallpapers){
 	return 0;
 }
 
-//update the indices and shuffling status file given the
+//Update the indices and shuffling status file given the
 // wallpaper and check lengths
-nwp_t update(nwp_t i,std::vector<nwp_t>& ind,nwp_t wall,nwp_t check){
-	nwp_t num=wall-check;
-	//files have been added
-	if(num>0){
-		//add new indices to access the files
-		for(nwp_t x=check;x<check-num;++x){
-			nwp_t v=random(wall);
-			
-			//make sure adding an index before
-			// the current index won't affect it
-			if(v<=i){
-				i+=1;
-			}
-			ind.insert(ind.begin()+v,x);
-		}
-	}
-	//files have been removed
-	else if(num<0){
-		for(nwp_t x=wall-num;x<wall;++x){
+nwp_t update(
+		const char* root,nwp_t i,
+		std::vector<nwp_t>& ind,std::vector<std::string>& wallpapers
+){
+	std::vector<std::string> check;
+	traverse(root,check);
+	nwp_t w=wallpapers.size(),c=check.size();
+	//Swapping is probably faster than copying
+	//wallpapers=check;
+	wallpapers.swap(check);
+	
+	//Files have been removed
+	if(w>c){
+		for(nwp_t x=c;x<w;++x){
 			auto v=std::find(ind.begin(),ind.end(),x)-ind.begin();
 			
-			//make sure removing an index before
-			// the current index won't affect it
+			//Make sure removing an index before the current index won't 
+			// affect it
 			if(v<i){
 				i-=1;
 			}
 			ind.erase(ind.begin()+v);
 		}
 	}
+	//Files have been added
+	else if(c>w){
+		//Add new indices to access the files
+		for(nwp_t x=w;x<c;++x){
+			//Insertion point should be random up to the max index
+			nwp_t v=random(x);
+			
+			//Make sure adding an index before the current index won't
+			// affect it
+			if(v<=i){
+				i+=1;
+			}
+			ind.insert(ind.begin()+v,x);
+		}
+	}
+	
+	//If wall == check, there may be some changes to the file hierarchy
+	// but there's no need to update the indices
 	
 	write_status(i,ind);
 	
 	return i;
 }
 
-#include <iostream>
-using namespace std;
-
 int main(int argc,char* argv[]){
-	unsigned delay;
+	std::chrono::seconds delay;
 	const char* root;
 	
-	//load command line arguments, handling defaults
+	//Load command line arguments, handling defaults
 	if(argc>2){
-		stringstream(argv[1])>>delay;
+		delay=std::chrono::seconds{atoi(argv[1])};
 		root=argv[2];
 	}
 	else if(argc>1){
-		stringstream(argv[1])>>delay;
-		//root defaults to the current directory
+		delay=std::chrono::seconds{atoi(argv[1])};
+		//Root defaults to the current directory
 		root=".";
 	}
 	else{
 		//1 minute default
-		delay=60;
+		delay=std::chrono::seconds{60};
 		root=".";
 	}
 	
-	//SendMessageTimeout(FindWindow("Progman",NULL),0x52c,0,0,0,500,NULL);
+	//Run any OS-specific initialization
+	init();
 	
 	std::vector<nwp_t> indices;
 	std::vector<std::string> wallpapers;
@@ -262,40 +334,54 @@ int main(int argc,char* argv[]){
 			while(i<indices.size()){
 				//start a timer just in case the operations take too long
 				auto start=std::chrono::steady_clock::now();
-				for(;;){
+				//Loop until the wallpaper is set, put the failsafe at 5
+				for(int fails=0;;){
+					//Make sure we don't create an infinite loop because
+					// of some unforeseeable edge case
+					if(fails>5){
+						throw std::runtime_error("Unable to set wallpaper");
+					}
+					
 					const char* wall=wallpapers[indices[i]].c_str();
 					if(exists(wall)){
 						set_wallpaper(wall);
 						break;
 					}
 					
-					std::vector<std::string> check;
-					traverse(root,check);
-					i=update(i,indices,wallpapers.size(),check.size());
-					wallpapers=check;
+					i=update(root,i,indices,wallpapers);
 				}
 				
-				write_status(++i,indices);
+				write_pos(++i);
 				
-				//sleep by the delay minus however much time has
-				// already passed
+				//Sleep by the delay minus however much time has already passed
 				std::this_thread::sleep_for(
-					std::chrono::seconds(delay)+
-					start-std::chrono::steady_clock::now()
+					delay-(std::chrono::steady_clock::now()-start)
 				);
 			}
 			
-			//check for any new wallpapers
-			std::vector<std::string> check;
-			traverse(root,check);
-			
-			//update the indices and shuffling status
-			i=update(i,indices,wallpapers.size(),check.size());
-			wallpapers.swap(check);
+			//Check for any new wallpapers
+			i=update(root,i,indices,wallpapers);
 		}
 	}
 	catch(std::runtime_error& e){
-		error(e.what());
-		return 1;
+		//Run any necessary deinitialization of resources
+		deinit();
+		
+		//Log the error to the error log
+		FILE* f=fopen("error.log","a");
+		time_t t=time(0);
+		if(f){
+			fprintf(f,"%s : %s\n\n",asctime(localtime(&t)),e.what());
+			fclose(f);
+			//Signal an error to the environment
+			return 1;
+		}
+		
+		//Last resort
+		char buf[256];
+		sprintf(buf,
+			"Couldn't open error log to log this exception:\n%s : %s\n\n",
+			asctime(localtime(&t)),e.what()
+		);
 	}
 }
