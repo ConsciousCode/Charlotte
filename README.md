@@ -3,16 +3,16 @@ Charlotte
 Named after Charlotte Perkins Gilman for her story "The Yellow Wallpaper".
 
 Designed for two reasons:
- * 100+ wallpapers are a pain to organize, and the shuffler that comes with Windows doesn't traverse the file hierarchy
+ * 100+ wallpapers are a pain to organize, and the shuffler that comes with Windows doesn't traverse the file hierarchy.
  * Even if the default shuffler followed the hierarchy, it uses a purely random selection algorithm, thus the same wallpaper was often selected soon after its last selection, giving the illusion of repetition. Charlotte guarantees that files will never repeat until every other file has been seen.
 
 Python
 ------
 ### Running
 charlotte.py takes the following command line arguments:
-> python charlotte.py [delay [root]]
-> 	delay	The delay in seconds (real, defaults to 60)
-> 	root	The root folder for getting wallpapers (defaults to .)
+ python charlotte.py [delay [root]]
+ 	delay	The delay in seconds (real, defaults to 60)
+ 	root	The root folder for getting wallpapers (defaults to .)
 
 ### Suggested usage
 Make a batch/bash file which calls charlotte.py with pythonw with your preferred arguments and add it to your startup. If you have some other wallpaper slideshow program/setting, be sure to disable it beforehand.
@@ -32,9 +32,9 @@ After some time it was noted that the Python version might not be as fast as it 
 
 ### Running
 charlotte.exe takes the following command line arguments:
-> charlotte [delay [root]]
-> 	delay	The delay in seconds (integer, defaults to 60)
-> 	root	The root folder for getting wallpapers (defaults to .)
+ charlotte [delay [root]]
+ 	delay	The delay in seconds (integer, defaults to 60)
+ 	root	The root folder for getting wallpapers (defaults to .)
 
 ### Suggested usage
 Simply run compile.bat and add charlotte.exe to your startup; gcc is given the -mwindows option, which disables the creation of a console. As with the Python version, be sure to disable any other wallpaper shuffling software.
