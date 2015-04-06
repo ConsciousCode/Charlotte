@@ -205,7 +205,7 @@ void write_status(nwp_t i,const std::vector<nwp_t>& indices){
 
 //Write just the position to the beginning of the file
 void write_pos(nwp_t i){
-	FILE* f=fopen("status","w+b");
+	FILE* f=fopen("status","r+b");
 	if(!f){
 		throw new std::runtime_error("Cannot open status file");
 	}
@@ -224,15 +224,19 @@ nwp_t read_status(std::vector<nwp_t>& indices,nwp_t wallpapers){
 	
 	if(f){
 		nwp_t i,data;
-		fread(&i,sizeof(nwp_t),1,f);
-		
-		while(fread(&data,sizeof(nwp_t),1,f)){
-			indices.push_back(data);
+		//Make sure the file doesn't just exist with no data
+		if(fread(&i,sizeof(nwp_t),1,f)==sizeof(nwp_t)){
+			while(fread(&data,sizeof(nwp_t),1,f)){
+				indices.push_back(data);
+			}
+			
+			fclose(f);
+			
+			//Make sure there's data to read
+			if(indices.size()){
+				return i;
+			}
 		}
-		
-		fclose(f);
-		
-		return i;
 	}
 	
 	//Build any list which enumerates all possible indices
@@ -321,6 +325,12 @@ int main(int argc,char* argv[]){
 		root=".";
 	}
 	
+	#if DEBUG
+		printf(
+			"Starting Charlotte with delay=%d and root=\"%s\"",delay,root
+		);
+	#endif
+	
 	//Run any OS-specific initialization
 	init();
 	
@@ -335,7 +345,7 @@ int main(int argc,char* argv[]){
 				//start a timer just in case the operations take too long
 				auto start=std::chrono::steady_clock::now();
 				//Loop until the wallpaper is set, put the failsafe at 5
-				for(int fails=0;;){
+				for(int fails=0;;++fails){
 					//Make sure we don't create an infinite loop because
 					// of some unforeseeable edge case
 					if(fails>5){
