@@ -37,8 +37,8 @@ typedef unsigned nwp_t;
 // void deinit();
 
 //Forward declarations for the OS-specific functions
-void error(const char*);
 nwp_t random(nwp_t);
+void error(const char*);
 bool exists(const char*);
 bool is_image(const char*);
 void write_status(nwp_t,const std::vector<nwp_t>&);
@@ -162,10 +162,11 @@ nwp_t update(const char*,nwp_t,std::vector<nwp_t>&,std::vector<std::string>&);
 	void deinit(){}
 #endif
 
-//Function returning an integer [0, hi)
+//RNG
+std::mt19937 rng;
+
 nwp_t random(nwp_t hi){
-	static std::mt19937 mt{(unsigned)time(0)};
-	return std::uniform_int_distribution<nwp_t>(0,hi)(mt);
+	return std::uniform_int_distribution<nwp_t>{0,hi}(rng);
 }
 
 //There might be faster ways to implement this using OS-specific code
@@ -246,7 +247,7 @@ nwp_t read_status(std::vector<nwp_t>& indices,nwp_t wallpapers){
 	
 	//Shuffle the list - this'll be iterated over incrementally to
 	// guarantee no repetitions
-	std::random_shuffle(indices.begin(),indices.end(),random);
+	std::shuffle(indices.begin(),indices.end(),rng);
 	
 	fclose(f);
 	
@@ -308,40 +309,38 @@ nwp_t update(
 }
 
 int main(int argc,char* argv[]){
-	std::chrono::seconds delay;
-	const char* root;
-	
-	//Load command line arguments, handling defaults
-	if(argc>2){
-		delay=std::chrono::seconds{atoi(argv[1])};
-		root=argv[2];
-	}
-	else if(argc>1){
-		delay=std::chrono::seconds{atoi(argv[1])};
-		//Root defaults to the current directory
-		root=".";
-	}
-	else{
-		//1 minute default
-		delay=std::chrono::seconds{60};
-		root=".";
-	}
-	
-	#if DEBUG
-		printf(
-			"Starting Charlotte with delay=%d and root=\"%s\"",delay,root
-		);
-	#endif
-	
-	//Run any OS-specific initialization
-	init();
-	
-	std::vector<nwp_t> indices;
-	std::vector<std::string> wallpapers;
-	traverse(root,wallpapers);
-	nwp_t i=read_status(indices,wallpapers.size());
-	
 	try{
+		std::chrono::seconds delay;
+		const char* root;
+		
+		//Load command line arguments, handling defaults
+		if(argc>2){
+			delay=std::chrono::seconds{atoi(argv[1])};
+			root=argv[2];
+		}
+		else if(argc>1){
+			delay=std::chrono::seconds{atoi(argv[1])};
+			//Root defaults to the current directory
+			root=".";
+		}
+		else{
+			//1 minute default
+			delay=std::chrono::seconds(60);
+			root=".";
+		}
+		
+		rng.seed((unsigned)time(0));
+		//MinGW tries to open /dev/urandom, which crashes the program
+		//rng.seed(std::random_device{}());
+		
+		//Run any OS-specific initialization
+		init();
+		
+		std::vector<nwp_t> indices;
+		std::vector<std::string> wallpapers;
+		traverse(root,wallpapers);
+		nwp_t i=read_status(indices,wallpapers.size());
+		
 		for(;;){
 			while(i<indices.size()){
 				//start a timer just in case the operations take too long
@@ -376,26 +375,23 @@ int main(int argc,char* argv[]){
 			i=update(root,i,indices,wallpapers);
 		}
 	}
-	catch(std::runtime_error& e){
+	catch(const std::exception& e){
 		//Run any necessary deinitialization of resources
 		deinit();
 		
 		//Log the error to the error log
 		FILE* f=fopen("error.log","a");
-		time_t t=time(0);
 		if(f){
-			fprintf(f,"%s : %s\n\n",asctime(localtime(&t)),e.what());
+			time_t t=time(0);
+			fprintf(f,"%s%s\n\n",asctime(localtime(&t)),e.what());
 			fclose(f);
 			//Signal an error to the environment
 			return 1;
 		}
 		
-		//Last resort
-		char buf[256];
-		sprintf(buf,
-			"Couldn't open error log to log this exception:\n%s : %s\n\n",
-			asctime(localtime(&t)),e.what()
-		);
-		perror(buf);
+		//At least we can alert the user that something's wrong
+		throw e;
 	}
+	//Just let the program crash if it gets to this point
+	//catch(...){}
 }
