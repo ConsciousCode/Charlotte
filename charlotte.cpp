@@ -259,7 +259,8 @@ nwp_t read_status(std::vector<nwp_t>& indices,nwp_t wallpapers){
 // wallpaper and check lengths
 nwp_t update(
 		const char* root,nwp_t i,
-		std::vector<nwp_t>& ind,std::vector<std::string>& wallpapers
+		std::vector<nwp_t>& ind,
+		std::vector<std::string>& wallpapers
 ){
 	std::vector<std::string> check;
 	traverse(root,check);
@@ -300,6 +301,7 @@ nwp_t update(
 	//If wall == check, there may be some changes to the file hierarchy
 	// but there's no need to update the indices
 	
+	i%=w;
 	write_status(i,ind);
 	
 	return i;
