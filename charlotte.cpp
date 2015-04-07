@@ -154,9 +154,9 @@ nwp_t update(const char*,nwp_t,std::vector<nwp_t>&,std::vector<std::string>&);
 	}
 	
 	void init(){
-		//I can't tell if this is actually necessary? It might be that it
-		// must be sent once per boot, or it might be entirely pointless.
-		//SendMessageTimeout(FindWindow("Progman",NULL),0x52c,0,0,0,500,NULL);
+		//Must be sent at least once per boot to enable fade transitions
+		//This tells Windows to enable ActiveDesktop, which may be disabled
+		SendMessageTimeout(FindWindow("Progman",NULL),0x52c,0,0,0,500,NULL);
 	}
 	
 	void deinit(){}
@@ -363,7 +363,8 @@ int main(int argc,char* argv[]){
 					i=update(root,i,indices,wallpapers);
 				}
 				
-				write_pos(++i);
+				write_pos(i);
+				++i;
 				
 				//Sleep by the delay minus however much time has already passed
 				std::this_thread::sleep_for(
@@ -395,5 +396,6 @@ int main(int argc,char* argv[]){
 			"Couldn't open error log to log this exception:\n%s : %s\n\n",
 			asctime(localtime(&t)),e.what()
 		);
+		perror(buf);
 	}
 }

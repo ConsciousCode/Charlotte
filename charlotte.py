@@ -31,11 +31,11 @@ try:
 		
 		i=ctypes.c_int()
 		#Sends a signal to Progman to fade when wallpaper changes
-		'''SendMessageTimeout(
+		SendMessageTimeout(
 			FindWindow("Progman",None),
 			0x52c,None,None,0,500,
 			ctypes.byref(i)
-		)'''
+		)
 		
 		def set_wallpaper(path):
 			#use the ActiveDesktop interface
